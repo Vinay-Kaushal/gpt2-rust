@@ -1,22 +1,20 @@
+mod safetensors;
+use safetensors::SafeTensors;
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    //load the whole file into memory as raw bytes
-    let model_bytes = std::fs::read("model/model.safetensors")?;
+    let model = SafeTensors::load("model/model.safetensors")?;
+    println!(
+        "loaded {} tensors (all sizes verified)",
+        model.tensors.len()
+    );
 
-    //the first 8 bytes are the header length
+    let wte = model.tensor("wte.weight")?;
+    println!("wte.weight shape: {:?}", wte.shape);
+    println!("wte.weight first 5 numbers: {:?}", &wte.data[0..5]);
 
-    let first_8: [u8; 8] = model_bytes[0..8].try_into()?;
-    let header_len = u64::from_le_bytes(first_8);
-    println!("header len {}", header_len);
-
-    //cut the header out and read at as a text
-
-    let header_len = header_len as usize;
-    let header_end = 8 + header_len;
-    let header_bytes = &model_bytes[8..header_end];
-    let header = std::str::from_utf8(header_bytes)?;
-
-    println!("first 300 chars of headers");
-    println!("{}", &header[0..300]);
+    let ln_f = model.tensor("ln_f.weight")?;
+    println!("ln_f.weight shape: {:?}", ln_f.shape);
+    println!("ln_f.weight first 5 numbers: {:?}", &ln_f.data[0..5]);
 
     Ok(())
 }
