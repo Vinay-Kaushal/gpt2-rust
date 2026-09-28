@@ -139,11 +139,7 @@ impl Gpt2 {
         let mut logits = vec![0.0; self.vocab_size];
         for v in 0..self.vocab_size {
             let row = &self.wte[v * DIM..(v + 1) * DIM];
-            let mut score = 0.0;
-            for i in 0..DIM {
-                score += h[i] * row[i];
-            }
-            logits[v] = score;
+            logits[v] = ops::dot(&h, row);
         }
         logits
     }

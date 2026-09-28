@@ -25,26 +25,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let prompt_ids = tokenizer.encode(prompt)?;
     println!("prompt: {prompt:?}  ids: {prompt_ids:?}\n");
 
-    // ---- 1. greedy WITHOUT a cache: every step re-reads the whole text ----
+    // ---- 1. speed benchmark: greedy, so the text is the same every run ----
+    // (only meaningful with `cargo run --release`)
+    let n_new = 50;
     let start = std::time::Instant::now();
-    let mut ids = prompt_ids.clone();
-    for _ in 0..20 {
-        let mut fresh = KvCache::new(); // empty cache = nothing is remembered
-        let logits = gpt2.forward(&ids, &mut fresh);
-        ids.push(sampler::sample_top_k(&logits, 1, 1.0, &mut Rng::new(0)));
-    }
-    let no_cache = ids[prompt_ids.len()..].to_vec();
-    println!("greedy, no cache  ({:.2?}):", start.elapsed());
+    let ids = generate(&gpt2, &tokenizer, &prompt_ids, n_new, 1, 1.0, &mut Rng::new(0), false)?;
+    let secs = start.elapsed().as_secs_f64();
+    println!("greedy, {} tokens in {secs:.2}s = {:.1} tokens/sec", ids.len(), ids.len() as f64 / secs);
     println!("  {:?}\n", tokenizer.decode(&ids)?);
 
-    // ---- 2. greedy WITH a cache: must pick exactly the same tokens ----
-    let start = std::time::Instant::now();
-    let mut rng = Rng::new(0);
-    let with_cache = generate(&gpt2, &tokenizer, &prompt_ids, 20, 1, 1.0, &mut rng, false)?;
-    println!("greedy, KV cache  ({:.2?}):", start.elapsed());
-    println!("  same tokens as no cache: {}\n", with_cache == no_cache);
-
-    // ---- 3. top-k sampling: different text for every seed ----
+    // ---- 2. top-k sampling: different text for every seed ----
     let seed = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)?
         .as_nanos() as u64;

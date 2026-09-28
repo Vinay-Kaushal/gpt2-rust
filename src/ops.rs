@@ -30,6 +30,34 @@ pub fn linear(out: &mut [f32], x: &[f32], w: &[f32], b: &[f32], in_dim: usize, o
     }
 }
 
+// Dot product: sum of a[i] * b[i].
+// One running total would make every + wait for the one before it.
+// 16 separate totals don't wait on each other, so the CPU updates
+// all 16 in one step (SIMD). At the end the 16 totals are added up.
+pub fn dot(a: &[f32], b: &[f32]) -> f32 {
+    assert_eq!(a.len(), b.len(), "dot of different lengths");
+    let mut sums = [0.0f32; 16];
+
+    // chunks_exact(16) hands out pieces of exactly 16 numbers;
+    // whatever is left over at the end (fewer than 16) is the remainder
+    let a_chunks = a.chunks_exact(16);
+    let b_chunks = b.chunks_exact(16);
+    let a_rest = a_chunks.remainder();
+    let b_rest = b_chunks.remainder();
+
+    for (ca, cb) in a_chunks.zip(b_chunks) {
+        for j in 0..16 {
+            sums[j] += ca[j] * cb[j];
+        }
+    }
+
+    let mut total: f32 = sums.iter().sum();
+    for (x, y) in a_rest.iter().zip(b_rest) {
+        total += x * y;
+    }
+    total
+}
+
 // Button 2: layer normalization.
 // For every token's row: shift to average 0, scale to spread 1,
 // then apply the learned scale (gamma) and shift (beta).
@@ -137,6 +165,19 @@ mod tests {
         let mut out = [0.0; 6];
         linear(&mut out, &x, &w, &b, 2, 3);
         assert_close(&out, &[1.0, 2.0, 4.0, 3.0, 4.0, 8.0]);
+    }
+
+    #[test]
+    fn dot_matches_simple_loop() {
+        // 37 numbers: two full chunks of 16 plus a remainder of 5
+        let a: Vec<f32> = (0..37).map(|i| i as f32 * 0.5).collect();
+        let b: Vec<f32> = (0..37).map(|i| 1.0 - i as f32 * 0.1).collect();
+        let mut want = 0.0;
+        for i in 0..37 {
+            want += a[i] * b[i];
+        }
+        assert_close(&[dot(&a, &b)], &[want]);
+        assert_close(&[dot(&[1.0, 2.0], &[3.0, 4.0])], &[11.0]); // shorter than 16
     }
 
     #[test]
