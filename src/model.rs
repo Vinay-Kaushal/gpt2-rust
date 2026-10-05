@@ -3,6 +3,7 @@
 
 use crate::ops;
 use crate::safetensors::SafeTensors;
+use rayon::prelude::*;
 use std::error::Error;
 
 // GPT-2 small's fixed sizes
@@ -135,12 +136,14 @@ impl Gpt2 {
         let mut h = vec![0.0; DIM];
         ops::layernorm(&mut h, last, &self.ln_f_w, &self.ln_f_b);
 
-        // 4. score every word: dot product of h with that word's wte row
+        // 4. score every word: dot product of h with that word's wte row.
+        // Every word's score is independent, so rayon spreads them over all cores;
+        // par_iter_mut gives each core its own separate slots of `logits` to fill.
         let mut logits = vec![0.0; self.vocab_size];
-        for v in 0..self.vocab_size {
+        logits.par_iter_mut().enumerate().for_each(|(v, logit)| {
             let row = &self.wte[v * DIM..(v + 1) * DIM];
-            logits[v] = ops::dot(&h, row);
-        }
+            *logit = ops::dot(&h, row);
+        });
         logits
     }
 }
