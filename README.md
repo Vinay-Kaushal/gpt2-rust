@@ -6,14 +6,7 @@ No ML frameworks, no tensor libraries: the safetensors weight file is parsed by 
 the byte-level BPE tokenizer, every math op, the transformer forward pass, the KV cache
 and the sampler are all written in plain Rust (~1000 lines).
 
-```
-$ cargo run --release -- "The meaning of life is" -n 40 -s 42
-[model loaded in 0.89s]
-The meaning of life is not so much the end of life as the beginning of a new life."
-
-"We're not trying to destroy life, we're trying to help people, for the sake of helping people,
-[40 tokens in 0.78s = 51.6 tokens/sec | k=40 temp=0.8 seed=42]
-```
+![demo: generating 80 tokens at ~65 tokens/sec](docs/demo.gif)
 
 ## Quick start
 
