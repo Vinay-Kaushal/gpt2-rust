@@ -7,7 +7,7 @@ use rayon::prelude::*;
 use std::error::Error;
 
 // GPT-2 small's fixed sizes
-const VOCAB: usize = 50257; // words in the dictionary
+pub const VOCAB: usize = 50257; // words in the dictionary
 const N_LAYER: usize = 12; // number of blocks
 const N_HEAD: usize = 12; // attention heads per block
 const DIM: usize = 768; // numbers per token
