@@ -24,10 +24,10 @@ pub fn from_bf16(h: u16) -> f32 {
 // Button 1: weighted sums.
 // For every token: output[o] = bias[o] + sum over i of (input[i] * weight[i][o])
 // x:   n_tokens rows of in_dim numbers
-// w:   in_dim rows of out_dim numbers (GPT-2 stores weights as [in, out])
+// w:   in_dim rows of out_dim numbers in bf16 (GPT-2 stores weights as [in, out])
 // b:   out_dim numbers
 // out: n_tokens rows of out_dim numbers (this function fills it)
-pub fn linear(out: &mut [f32], x: &[f32], w: &[f32], b: &[f32], in_dim: usize, out_dim: usize) {
+pub fn linear(out: &mut [f32], x: &[f32], w: &[u16], b: &[f32], in_dim: usize, out_dim: usize) {
     let n_tokens = x.len() / in_dim;
     assert_eq!(x.len(), n_tokens * in_dim, "x is not whole rows");
     assert_eq!(w.len(), in_dim * out_dim, "weight has wrong size");
@@ -44,7 +44,7 @@ pub fn linear(out: &mut [f32], x: &[f32], w: &[f32], b: &[f32], in_dim: usize, o
             let xi = x_row[i];
             let w_row = &w[i * out_dim..(i + 1) * out_dim];
             for o in 0..out_dim {
-                out_row[o] += xi * w_row[o];
+                out_row[o] += xi * from_bf16(w_row[o]);
             }
         }
     }
@@ -54,7 +54,8 @@ pub fn linear(out: &mut [f32], x: &[f32], w: &[f32], b: &[f32], in_dim: usize, o
 // One running total would make every + wait for the one before it.
 // 16 separate totals don't wait on each other, so the CPU updates
 // all 16 in one step (SIMD). At the end the 16 totals are added up.
-pub fn dot(a: &[f32], b: &[f32]) -> f32 {
+// b is in bf16 (it is a row of the word table).
+pub fn dot(a: &[f32], b: &[u16]) -> f32 {
     assert_eq!(a.len(), b.len(), "dot of different lengths");
     let mut sums = [0.0f32; 16];
 
@@ -67,13 +68,13 @@ pub fn dot(a: &[f32], b: &[f32]) -> f32 {
 
     for (ca, cb) in a_chunks.zip(b_chunks) {
         for j in 0..16 {
-            sums[j] += ca[j] * cb[j];
+            sums[j] += ca[j] * from_bf16(cb[j]);
         }
     }
 
     let mut total: f32 = sums.iter().sum();
-    for (x, y) in a_rest.iter().zip(b_rest) {
-        total += x * y;
+    for (x, &y) in a_rest.iter().zip(b_rest) {
+        total += x * from_bf16(y);
     }
     total
 }
@@ -164,6 +165,11 @@ mod tests {
         }
     }
 
+    // the weights in these tests are written as f32, then turned into bf16
+    fn bf16s(v: &[f32]) -> Vec<u16> {
+        v.iter().map(|&x| to_bf16(x)).collect()
+    }
+
     #[test]
     fn bf16_round_trip() {
         // these fit in 7 fraction bits, so they survive exactly
@@ -184,10 +190,10 @@ mod tests {
     fn linear_hand_example() {
         // 1 token with 2 inputs, 3 outputs
         let x = [1.0, 2.0];
-        let w = [
+        let w = bf16s(&[
             1.0, 0.0, 1.0, // row for input 0
             0.0, 1.0, 1.0, // row for input 1
-        ];
+        ]);
         let b = [0.0, 0.0, 1.0];
         let mut out = [0.0; 3];
         linear(&mut out, &x, &w, &b, 2, 3);
@@ -198,7 +204,7 @@ mod tests {
     fn linear_two_tokens() {
         // each token is handled on its own
         let x = [1.0, 2.0, 3.0, 4.0];
-        let w = [1.0, 0.0, 1.0, 0.0, 1.0, 1.0];
+        let w = bf16s(&[1.0, 0.0, 1.0, 0.0, 1.0, 1.0]);
         let b = [0.0, 0.0, 1.0];
         let mut out = [0.0; 6];
         linear(&mut out, &x, &w, &b, 2, 3);
@@ -209,13 +215,13 @@ mod tests {
     fn dot_matches_simple_loop() {
         // 37 numbers: two full chunks of 16 plus a remainder of 5
         let a: Vec<f32> = (0..37).map(|i| i as f32 * 0.5).collect();
-        let b: Vec<f32> = (0..37).map(|i| 1.0 - i as f32 * 0.1).collect();
+        let b = bf16s(&(0..37).map(|i| 1.0 - i as f32 * 0.1).collect::<Vec<f32>>());
         let mut want = 0.0;
         for i in 0..37 {
-            want += a[i] * b[i];
+            want += a[i] * from_bf16(b[i]);
         }
         assert_close(&[dot(&a, &b)], &[want]);
-        assert_close(&[dot(&[1.0, 2.0], &[3.0, 4.0])], &[11.0]); // shorter than 16
+        assert_close(&[dot(&[1.0, 2.0], &bf16s(&[3.0, 4.0]))], &[11.0]); // shorter than 16
     }
 
     #[test]

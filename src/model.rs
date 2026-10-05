@@ -15,24 +15,26 @@ const HEAD_DIM: usize = DIM / N_HEAD; // 64 numbers per head
 const MLP_DIM: usize = 4 * DIM; // 3072
 pub const MAX_POS: usize = 1024; // longest input GPT-2 can read
 
-// All the weights of one block
+// All the weights of one block.
+// The 4 big matrices are bf16 (u16, see ops::to_bf16): they are 99% of the bytes
+// read per token. The small vectors stay f32.
 struct Block {
     ln_1_w: Vec<f32>,
     ln_1_b: Vec<f32>,
-    attn_w: Vec<f32>, // [768, 2304]: makes q, k, v
+    attn_w: Vec<u16>, // [768, 2304]: makes q, k, v
     attn_b: Vec<f32>,
-    attn_proj_w: Vec<f32>, // [768, 768]
+    attn_proj_w: Vec<u16>, // [768, 768]
     attn_proj_b: Vec<f32>,
     ln_2_w: Vec<f32>,
     ln_2_b: Vec<f32>,
-    fc_w: Vec<f32>, // [768, 3072]: MLP up
+    fc_w: Vec<u16>, // [768, 3072]: MLP up
     fc_b: Vec<f32>,
-    proj_w: Vec<f32>, // [3072, 768]: MLP down
+    proj_w: Vec<u16>, // [3072, 768]: MLP down
     proj_b: Vec<f32>,
 }
 
 pub struct Gpt2 {
-    wte: Vec<f32>, // [50257, 768] word table
+    wte: Vec<u16>, // [50257, 768] word table, bf16
     wpe: Vec<f32>, // [1024, 768]  position table
     blocks: Vec<Block>,
     ln_f_w: Vec<f32>,
@@ -50,6 +52,10 @@ impl Gpt2 {
             }
             Ok(t.data)
         };
+        // same, but turned into bf16 for the big matrices
+        let get_bf16 = |name: &str, shape: &[usize]| -> Result<Vec<u16>, Box<dyn Error>> {
+            Ok(get(name, shape)?.iter().map(|&x| ops::to_bf16(x)).collect())
+        };
 
         let mut blocks = Vec::with_capacity(N_LAYER);
         for l in 0..N_LAYER {
@@ -57,21 +63,21 @@ impl Gpt2 {
             blocks.push(Block {
                 ln_1_w: get(&format!("{p}ln_1.weight"), &[DIM])?,
                 ln_1_b: get(&format!("{p}ln_1.bias"), &[DIM])?,
-                attn_w: get(&format!("{p}attn.c_attn.weight"), &[DIM, 3 * DIM])?,
+                attn_w: get_bf16(&format!("{p}attn.c_attn.weight"), &[DIM, 3 * DIM])?,
                 attn_b: get(&format!("{p}attn.c_attn.bias"), &[3 * DIM])?,
-                attn_proj_w: get(&format!("{p}attn.c_proj.weight"), &[DIM, DIM])?,
+                attn_proj_w: get_bf16(&format!("{p}attn.c_proj.weight"), &[DIM, DIM])?,
                 attn_proj_b: get(&format!("{p}attn.c_proj.bias"), &[DIM])?,
                 ln_2_w: get(&format!("{p}ln_2.weight"), &[DIM])?,
                 ln_2_b: get(&format!("{p}ln_2.bias"), &[DIM])?,
-                fc_w: get(&format!("{p}mlp.c_fc.weight"), &[DIM, MLP_DIM])?,
+                fc_w: get_bf16(&format!("{p}mlp.c_fc.weight"), &[DIM, MLP_DIM])?,
                 fc_b: get(&format!("{p}mlp.c_fc.bias"), &[MLP_DIM])?,
-                proj_w: get(&format!("{p}mlp.c_proj.weight"), &[MLP_DIM, DIM])?,
+                proj_w: get_bf16(&format!("{p}mlp.c_proj.weight"), &[MLP_DIM, DIM])?,
                 proj_b: get(&format!("{p}mlp.c_proj.bias"), &[DIM])?,
             });
         }
 
         Ok(Gpt2 {
-            wte: get("wte.weight", &[VOCAB, DIM])?,
+            wte: get_bf16("wte.weight", &[VOCAB, DIM])?,
             wpe: get("wpe.weight", &[MAX_POS, DIM])?,
             blocks,
             ln_f_w: get("ln_f.weight", &[DIM])?,
@@ -94,7 +100,7 @@ impl Gpt2 {
             let id = id as usize;
             let pos = start + t; // real position in the whole text
             for i in 0..DIM {
-                x[t * DIM + i] = self.wte[id * DIM + i] + self.wpe[pos * DIM + i];
+                x[t * DIM + i] = ops::from_bf16(self.wte[id * DIM + i]) + self.wpe[pos * DIM + i];
             }
         }
 
