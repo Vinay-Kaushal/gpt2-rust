@@ -37,10 +37,17 @@ pub fn sample_top_k(logits: &[f32], k: usize, temperature: f32, rng: &mut Rng) -
     assert!(k >= 1 && k <= logits.len(), "k must be 1..=vocab size");
     assert!(temperature > 0.0, "temperature must be above 0");
 
-    // 1. sort token ids by score, biggest first, and keep the top k
+    // 1. find the top k token ids, biggest score first.
+    // Sorting all 50257 ids just to keep 40 is wasted work, so first
+    // select_nth_unstable_by moves the k best to the front (in any order),
+    // then only those k get sorted. Equal scores: the smaller id goes first.
+    let better = |a: &usize, b: &usize| logits[*b].total_cmp(&logits[*a]).then(a.cmp(b));
     let mut order: Vec<usize> = (0..logits.len()).collect();
-    order.sort_by(|&a, &b| logits[b].total_cmp(&logits[a]));
-    order.truncate(k);
+    if k < order.len() {
+        order.select_nth_unstable_by(k - 1, better);
+        order.truncate(k);
+    }
+    order.sort_by(better);
     if k == 1 {
         return order[0] as u32;
     }
@@ -69,6 +76,12 @@ mod tests {
     fn k1_is_greedy() {
         let mut rng = Rng::new(1);
         assert_eq!(sample_top_k(&[0.1, 3.0, -2.0, 2.9], 1, 1.0, &mut rng), 1);
+    }
+
+    #[test]
+    fn ties_go_to_the_smaller_id() {
+        let mut rng = Rng::new(1);
+        assert_eq!(sample_top_k(&[1.0, 7.0, 7.0, 7.0], 1, 1.0, &mut rng), 1);
     }
 
     #[test]
