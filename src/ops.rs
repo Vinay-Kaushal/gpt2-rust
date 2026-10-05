@@ -117,11 +117,13 @@ pub fn softmax(x: &mut [f32]) {
 // Button 4: GELU, in place.
 // A smooth "keep positives, squash negatives" curve.
 // This is the exact approximation GPT-2 was trained with.
+const GELU_K: f32 = 0.044158; // weight of the v^3 term
+
 pub fn gelu(x: &mut [f32]) {
     let c = (2.0 / std::f32::consts::PI).sqrt();
     for i in 0..x.len() {
         let v = x[i];
-        x[i] = 0.5 * v * (1.0 + (c * (v + 0.044158 * v * v * v)).tanh());
+        x[i] = 0.5 * v * (1.0 + (c * (v + GELU_K * v * v * v)).tanh());
     }
 }
 
