@@ -1,6 +1,26 @@
 // Phase 4: the 4 math "buttons" GPT-2 is built from.
 // Every matrix is a flat list of numbers, stored row after row.
 
+// bf16 ("brain float 16") = the top 16 bits of an f32: same sign and exponent,
+// but only 7 of the 23 fraction bits. Half the bytes, so the big weight matrices
+// come from RAM twice as fast; the math itself is still done in f32.
+// A bf16 is kept in a plain u16 (Rust has no built-in bf16 type).
+
+// f32 -> bf16, rounding to the nearest bf16 (ties go to the even one).
+// Adding 0x7FFF (+1 if the kept part is odd) before cutting off the low
+// 16 bits makes the cut round instead of always rounding down.
+pub fn to_bf16(x: f32) -> u16 {
+    let bits = x.to_bits();
+    let round = 0x7FFF + ((bits >> 16) & 1);
+    ((bits + round) >> 16) as u16
+}
+
+// bf16 -> f32: put the 16 bits back on top, fill the bottom with zeros.
+// Just a shift, so the CPU can do 16 of these at once (SIMD).
+pub fn from_bf16(h: u16) -> f32 {
+    f32::from_bits((h as u32) << 16)
+}
+
 // Button 1: weighted sums.
 // For every token: output[o] = bias[o] + sum over i of (input[i] * weight[i][o])
 // x:   n_tokens rows of in_dim numbers
@@ -142,6 +162,22 @@ mod tests {
                 want[i]
             );
         }
+    }
+
+    #[test]
+    fn bf16_round_trip() {
+        // these fit in 7 fraction bits, so they survive exactly
+        for x in [0.0, 1.0, -2.5, 0.15625, 3.0e38, -1.0e-30] {
+            let back = from_bf16(to_bf16(x));
+            assert!(back == x || (back - x).abs() <= x.abs() / 128.0, "{x} -> {back}");
+        }
+        // 1 + 2^-8 is exactly halfway between 1 and the next bf16: ties go to even (1.0)
+        assert_eq!(from_bf16(to_bf16(1.00390625)), 1.0);
+        // just above halfway rounds up
+        assert_eq!(from_bf16(to_bf16(1.0040)), 1.0078125);
+        // a weight like 0.1 lands within 1/256 of itself
+        let back = from_bf16(to_bf16(0.1));
+        assert!((back - 0.1).abs() < 0.1 / 256.0, "0.1 -> {back}");
     }
 
     #[test]
